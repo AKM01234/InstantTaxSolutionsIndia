@@ -79,7 +79,8 @@
         .portal-sidebar.active { transform: translateX(0); }
         .portal-page { display: none !important; padding-bottom: 80px; animation: fadeIn 0.3s ease-out; }
         .portal-page.active { display: block !important; }
-        #portal-login.active { display: flex !important; }
+        /* FIXED: Login is now fixed overlay to hide header */
+        #portal-login.active { display: flex !important; } 
         .progress-ring__circle { transition: stroke-dashoffset 0.5s ease-in-out; transform: rotate(-90deg); transform-origin: 50% 50%; }
 
         /* Floating Background Animation */
@@ -1107,6 +1108,7 @@
     const portalApp = {
         currentFilter: 'ALL',
         isSignup: false,
+        currentUser: null,
         profile: { type: "Private Limited", turnover: 150000000, gst: true, payroll: false },
         statusMap: {
             "GSTR3B": { status: "ONGOING", paid: false, dueDate: "20th Jan" },
@@ -1117,7 +1119,8 @@
 
         nav(pageId, filter) {
             document.querySelectorAll('.portal-page').forEach(el => el.classList.remove('active'));
-            document.getElementById(`portal-${pageId}`).classList.add('active');
+            const target = document.getElementById(`portal-${pageId}`);
+            if(target) target.classList.add('active');
             
             const titles = { 'dashboard': 'Dashboard', 'profile': 'Profile', 'contact': 'Contact Info', 'list': 'Compliances', 'login': 'Login' };
             const titleEl = document.getElementById('app-header-title');
@@ -1152,47 +1155,114 @@
         },
 
         handleEmailAuth() {
-            const email = document.getElementById('emailInput').value;
-            const pass = document.getElementById('passInput').value;
-            
-            if(this.isSignup) {
-                // Sign Up Logic
-                firebase.auth().createUserWithEmailAndPassword(email, pass)
-                .then((userCredential) => {
-                    const name = document.getElementById('nameInput').value;
-                    // Mock Profile save
-                    alert("Account Created! Welcome " + name);
-                    this.login();
-                })
-                .catch((error) => {
-                    alert("Error: " + error.message);
-                });
-            } else {
-                // Login Logic
-                firebase.auth().signInWithEmailAndPassword(email, pass)
-                .then((userCredential) => {
-                    this.login();
-                })
-                .catch((error) => {
-                    // Fallback for demo if firebase fails or no net
-                    if(email === 'client@example.com') this.login();
-                    else alert("Error: " + error.message);
-                });
-            }
+             const email = document.getElementById('emailInput').value;
+             const pass = document.getElementById('passInput').value;
+             
+             if(!email || !pass) {
+                 alert("Please enter email and password");
+                 return;
+             }
+             
+             if (typeof firebase !== 'undefined' && firebase.auth) {
+                 if(this.isSignup) {
+                     firebase.auth().createUserWithEmailAndPassword(email, pass)
+                     .then((userCredential) => {
+                         this.handleUserLogin(userCredential.user);
+                     })
+                     .catch((error) => {
+                         alert("Error: " + error.message);
+                     });
+                 } else {
+                     firebase.auth().signInWithEmailAndPassword(email, pass)
+                     .then((userCredential) => {
+                         this.handleUserLogin(userCredential.user);
+                     })
+                     .catch((error) => {
+                         alert("Error: " + error.message);
+                     });
+                 }
+             } else {
+                 console.warn("Firebase not connected. Simulating login.");
+                 this.login();
+             }
         },
 
         loginGoogle() {
-            var provider = new firebase.auth.GoogleAuthProvider();
-            firebase.auth().signInWithPopup(provider).then((result) => {
+            if (typeof firebase === 'undefined' || !firebase.apps.length) {
+                alert("Firebase is not initialized. Running in demo mode.");
                 this.login();
-            }).catch((error) => {
-                console.log(error);
-                alert("Google Sign In Failed (Check Console)");
-            });
+                return;
+            }
+
+            var provider = new firebase.auth.GoogleAuthProvider();
+            
+            firebase.auth().signInWithPopup(provider)
+                .then((result) => {
+                    this.handleUserLogin(result.user);
+                })
+                .catch((error) => {
+                    console.error("Google Auth Error:", error);
+                    let msg = "Sign In Failed: " + error.message;
+                    if (error.code === 'auth/unauthorized-domain') {
+                        msg = "Error: This domain is not authorized. Please add it to Firebase Console > Authentication > Settings > Authorized Domains.";
+                    } else if (error.code === 'auth/operation-not-supported-in-this-environment') {
+                        msg = "Google Sign-In requires a hosted environment (http/https). It does not work in local files or some preview sandboxes. \n\nLogging you in with Demo Access now.";
+                        alert(msg);
+                        this.login();
+                        return; 
+                    }
+                    alert(msg);
+                });
+        },
+
+        async handleUserLogin(user) {
+            this.currentUser = user;
+            
+            if (typeof firebase !== 'undefined' && firebase.firestore) {
+                const db = firebase.firestore();
+                const userRef = db.collection('users').doc(user.uid);
+                
+                try {
+                    const doc = await userRef.get();
+                    if (doc.exists) {
+                        const data = doc.data();
+                        if(data.profile) {
+                            this.profile = data.profile;
+                            
+                            // Update UI Fields
+                            if(document.getElementById('profType')) document.getElementById('profType').value = this.profile.type;
+                            if(document.getElementById('profTurnover')) document.getElementById('profTurnover').value = this.profile.turnover;
+                            if(document.getElementById('profGst')) document.getElementById('profGst').checked = this.profile.gst;
+                            if(document.getElementById('profPayroll')) document.getElementById('profPayroll').checked = this.profile.payroll;
+                        }
+                    } else {
+                        // Create default profile
+                        const newProfile = {
+                            type: "Private Limited",
+                            turnover: 150000000,
+                            gst: true,
+                            payroll: false,
+                            email: user.email,
+                            name: user.displayName || "New User"
+                        };
+                        await userRef.set({
+                            profile: newProfile,
+                            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                        });
+                        this.profile = newProfile;
+                    }
+                } catch (error) {
+                    console.error("Error fetching/creating profile:", error);
+                    // Fallback to local profile if DB error
+                }
+            }
+            
+            this.login();
         },
 
         login() {
-            document.getElementById('portal-login').classList.remove('active');
+            const loginPage = document.getElementById('portal-login');
+            if(loginPage) loginPage.classList.remove('active');
             this.refreshList();
             this.nav('dashboard');
         },
@@ -1202,7 +1272,17 @@
             this.profile.turnover = parseInt(document.getElementById('profTurnover').value);
             this.profile.gst = document.getElementById('profGst').checked;
             this.profile.payroll = document.getElementById('profPayroll').checked;
-            alert("Profile Updated! Recalculating...");
+            
+            if (this.currentUser && typeof firebase !== 'undefined' && firebase.firestore) {
+                const db = firebase.firestore();
+                db.collection('users').doc(this.currentUser.uid).update({
+                    profile: this.profile
+                }).then(() => alert("Profile Saved to Cloud!"))
+                  .catch(e => alert("Save failed: " + e.message));
+            } else {
+                alert("Profile Updated Locally! (Not saved to cloud)");
+            }
+            
             this.refreshList();
             this.nav('dashboard');
         },
@@ -1639,6 +1719,15 @@
             // Optionally initialize other services like analytics or firestore if needed:
             // const db = firebase.firestore();
             // console.log("Firebase initialized");
+            
+            // Auto Login Check
+            firebase.auth().onAuthStateChanged((user) => {
+                if (user) {
+                    console.log("User already logged in:", user.uid);
+                    portalApp.handleUserLogin(user);
+                }
+            });
+
           } catch (e) {
             console.error("Firebase initialization failed:", e);
           }
