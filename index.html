@@ -704,10 +704,10 @@
     <div id="app-sidebar-overlay" class="fixed inset-0 bg-black/50 z-40 hidden" onclick="portalUI.closeSidebar()"></div>
     <aside id="app-sidebar" class="fixed top-0 left-0 h-full w-72 bg-white z-50 shadow-2xl flex flex-col portal-sidebar">
         <div class="p-6 bg-slate-900 text-white flex items-center gap-3">
-            <div class="w-10 h-10 rounded-full bg-brand-600 flex items-center justify-center font-bold">VP</div>
+            <div id="sidebarUserInitials" class="w-10 h-10 rounded-full bg-brand-600 flex items-center justify-center font-bold">VP</div>
             <div>
-                <h3 class="font-bold text-sm">Vikram Patel</h3>
-                <p class="text-[10px] text-slate-400">client@example.com</p>
+                <h3 id="sidebarUserName" class="font-bold text-sm">Vikram Patel</h3>
+                <p id="sidebarUserEmail" class="text-[10px] text-slate-400">client@example.com</p>
             </div>
         </div>
         <nav class="flex-1 overflow-y-auto py-4 space-y-1">
@@ -845,7 +845,7 @@
             <div class="bg-slate-900 rounded-2xl p-6 text-white shadow-xl relative overflow-hidden">
                 <div class="absolute top-0 right-0 w-32 h-32 bg-brand-600 rounded-full blur-3xl opacity-20 -mr-10 -mt-10"></div>
                 <h2 class="text-lg font-medium text-slate-300">Welcome back,</h2>
-                <h1 class="text-2xl font-bold mb-4">Vikram Patel</h1>
+                <h1 id="dashboardUserName" class="text-2xl font-bold mb-4">Vikram Patel</h1>
                 <div class="flex gap-4">
                     <div class="bg-white/10 rounded-lg px-4 py-2 backdrop-blur-sm">
                         <span class="block text-2xl font-bold text-orange-400" id="dashOngoing">0</span>
@@ -1129,6 +1129,14 @@
             portalUI.closeSidebar();
             if(pageId === 'list') this.renderList(filter);
             if(pageId === 'dashboard') this.updateDashboardStats();
+            
+            // Sync Profile Form Fields
+            if(pageId === 'profile') {
+                if(document.getElementById('profType')) document.getElementById('profType').value = this.profile.type;
+                if(document.getElementById('profTurnover')) document.getElementById('profTurnover').value = this.profile.turnover;
+                if(document.getElementById('profGst')) document.getElementById('profGst').checked = this.profile.gst;
+                if(document.getElementById('profPayroll')) document.getElementById('profPayroll').checked = this.profile.payroll;
+            }
         },
         
         toggleAuthMode() {
@@ -1158,11 +1166,13 @@
              const email = document.getElementById('emailInput').value;
              const pass = document.getElementById('passInput').value;
              
+             // Simple validation
              if(!email || !pass) {
                  alert("Please enter email and password");
                  return;
              }
              
+             // Check if firebase is available
              if (typeof firebase !== 'undefined' && firebase.auth) {
                  if(this.isSignup) {
                      firebase.auth().createUserWithEmailAndPassword(email, pass)
@@ -1182,6 +1192,7 @@
                      });
                  }
              } else {
+                 // Fallback for UI testing without Firebase config working
                  console.warn("Firebase not connected. Simulating login.");
                  this.login();
              }
@@ -1218,6 +1229,21 @@
         async handleUserLogin(user) {
             this.currentUser = user;
             
+            // Update UI with user details
+            const displayName = user.displayName || user.email.split('@')[0];
+            const email = user.email;
+            
+            // Safely update DOM elements if they exist
+            const nameEl = document.getElementById('sidebarUserName');
+            const emailEl = document.getElementById('sidebarUserEmail');
+            const welcomeEl = document.getElementById('dashboardUserName');
+            const initialsEl = document.getElementById('sidebarUserInitials');
+            
+            if(nameEl) nameEl.innerText = displayName;
+            if(emailEl) emailEl.innerText = email;
+            if(welcomeEl) welcomeEl.innerText = displayName;
+            if(initialsEl) initialsEl.innerText = displayName.charAt(0).toUpperCase();
+            
             if (typeof firebase !== 'undefined' && firebase.firestore) {
                 const db = firebase.firestore();
                 const userRef = db.collection('users').doc(user.uid);
@@ -1228,12 +1254,6 @@
                         const data = doc.data();
                         if(data.profile) {
                             this.profile = data.profile;
-                            
-                            // Update UI Fields
-                            if(document.getElementById('profType')) document.getElementById('profType').value = this.profile.type;
-                            if(document.getElementById('profTurnover')) document.getElementById('profTurnover').value = this.profile.turnover;
-                            if(document.getElementById('profGst')) document.getElementById('profGst').checked = this.profile.gst;
-                            if(document.getElementById('profPayroll')) document.getElementById('profPayroll').checked = this.profile.payroll;
                         }
                     } else {
                         // Create default profile
@@ -1243,7 +1263,7 @@
                             gst: true,
                             payroll: false,
                             email: user.email,
-                            name: user.displayName || "New User"
+                            name: displayName
                         };
                         await userRef.set({
                             profile: newProfile,
